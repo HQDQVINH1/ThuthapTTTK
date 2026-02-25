@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # CHƯƠNG TRÌNH THU THẬP VÀ TỔNG HỢP THÔNG TIN KINH TẾ VĨ MÔ
-# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 9 - STABLE)
+# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 10 - STABLE)
 # ============================================================
 
 import os
@@ -261,4 +261,443 @@ def add_trendline(df: pd.DataFrame, x: str, y: str):
     y_line = a * x_line + b
     return x_line, y_line, a, b
 
-def to_excel_bytes(df_data: pd.DataFrame, df_stats: pd.DataFrame, corr
+def to_excel_bytes(df_data: pd.DataFrame, df_stats: pd.DataFrame, corr: pd.DataFrame) -> bytes:
+    import openpyxl 
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_data.to_excel(writer, index=False, sheet_name="Data")
+        df_stats.to_excel(writer, index=False, sheet_name="Stats")
+        (corr if not corr.empty else pd.DataFrame()).to_excel(writer, sheet_name="Correlation")
+    buf.seek(0)
+    return buf.read()
+
+# ---------------------------
+# Giao diện (brand Agribank)
+# ---------------------------
+st.set_page_config(page_title="Chương trình thu thập & tổng hợp vĩ mô VN", layout="wide")
+
+st.markdown(f"""
+<style>
+:root {{ --brand: {AGRIBANK_RGB}; }}
+.topbar {{
+  width: 100%; padding: 8px 16px;
+  background: linear-gradient(90deg, rgba(174,28,63,1) 0%, rgba(174,28,63,0.8) 60%, rgba(174,28,63,0.6) 100%);
+  color: #fff; display: flex; align-items: center; gap: 12px; border-radius: 12px;
+}}
+.logo-chip {{ display: inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; background: rgba(255,255,255,0.15); font-weight:600; letter-spacing:0.4px; }}
+.logo-dot {{ width:10px; height:10px; border-radius:50%; background:#fff; display:inline-block; }}
+.main-title {{ text-align:center; color: #d80000; margin: 12px 0 2px 0; }}
+.source-chips {{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-bottom:6px; }}
+.source-chips .chip {{ padding:4px 10px; border-radius:999px; border:1px solid rgba(174,28,63,0.3); background: rgba(174,28,63,0.06); color:#7a0f28; font-size:12px; font-weight:600; }}
+.stButton>button {{ background: var(--brand); color:#fff; border:0; border-radius:10px; padding:8px 16px; font-weight:700; }}
+.stButton>button:hover {{ filter: brightness(1.05); }}
+.stTabs [data-baseweb="tab"] {{ font-weight:700; color:#7a0f28; }}
+[data-testid="stDataFrame"] {{ border: 1px solid rgba(174,28,63,0.25); border-radius:12px; }}
+[data-testid="stSidebar"] {{ background: linear-gradient(180deg, rgba(174,28,63,0.07), transparent); }}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="topbar">
+  <div class="logo-chip"><span class="logo-dot"></span> AGRIBANK</div>
+  <div style="font-weight:700; letter-spacing:0.3px;">Chuyển đổi số • Dữ liệu mở • Phân tích thông minh</div>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown(
+    "<h1 class='main-title'>CHƯƠNG TRÌNH THU THẬP VÀ TỔNG HỢP THÔNG TIN KINH TẾ VĨ MÔ CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH</h1>",
+    unsafe_allow_html=True
+)
+
+st.markdown("""
+<div class="source-chips">
+  <div class="chip">World Bank</div>
+  <div class="chip">UNDP</div>
+  <div class="chip">IMF</div>
+  <div class="chip">GSO</div>
+  <div class="chip">SBV</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------
+# Sidebar thiết lập
+# ---------------------------
+with st.sidebar:
+    st.header("Thiết lập")
+
+    try:
+        countries_df = list_wb_countries()
+        labels, id_to_label = [], {}
+        for _id, _name in zip(countries_df["id"], countries_df["name"]):
+            label = "VNM - Việt Nam" if _id == "VNM" else f"{_id} — {_name}"
+            labels.append(label)
+            id_to_label[label] = (_id, "Việt Nam" if _id == "VNM" else _name)
+        default_idx = labels.index("VNM - Việt Nam") if "VNM - Việt Nam" in labels else (int((countries_df["id"] == "VNM").idxmax()) if "VNM" in set(countries_df["id"]) else 0)
+        country_label = st.selectbox("Quốc gia", options=labels, index=default_idx)
+        sel_country, sel_country_name = id_to_label[country_label][0], id_to_label[country_label][1]
+    except Exception:
+        st.warning("Không lấy được danh sách quốc gia từ World Bank. Dùng mặc định: VNM - Việt Nam.")
+        sel_country, sel_country_name = "VNM", "Việt Nam"
+
+    st.subheader("Khoảng năm")
+    col_y1, col_y2 = st.columns(2)
+    with col_y1:
+        start_year = st.number_input("Từ năm", min_value=1960, max_value=2100, value=2000, step=1)
+    with col_y2:
+        end_year = st.number_input("Đến năm", min_value=1960, max_value=2100, value=2024, step=1)
+    if start_year > end_year:
+        st.error("Khoảng năm không hợp lệ: 'Từ năm' phải ≤ 'Đến năm'.")
+
+    st.subheader("Chỉ số (World Bank)")
+    indicator_map = {f"{name} [{code}]": code for code, name, _ in DEFAULT_INDICATORS}
+    selection = st.multiselect(
+        "Chọn chỉ số",
+        options=list(indicator_map.keys()),
+        default=[f"{name} [{code}]" for code, name, _ in DEFAULT_INDICATORS]
+    )
+    selected_codes = [indicator_map[o] for o in selection]
+
+    with st.expander("Chỉ số mở rộng (SBV / IMF / GSO)"):
+        ext_map = {f"{label} [{code}] — nguồn: {src}": code for code, label, unit, src in EXTENDED_INDICATORS}
+        ext_sel = st.multiselect(
+            "Chọn chỉ số mở rộng",
+            options=list(ext_map.keys()),
+            default=[f"{label} [{code}] — nguồn: {src}" for code, label, unit, src in EXTENDED_INDICATORS if code != "SBV.POLICY.RATE"]
+        )
+        selected_ext = [ext_map[o] for o in ext_sel]
+
+    if "missing_method" not in st.session_state:
+        st.session_state["missing_method"] = "Giữ nguyên (N/A)"
+
+# ---------------------------
+# ETL: tải dữ liệu (song song)
+# ---------------------------
+with st.spinner("Đang lấy dữ liệu..."):
+    wb_d = fetch_wb_indicators_parallel(sel_country, selected_codes, int(start_year), int(end_year))
+    ext_d = {code: fetch_extended_indicator(sel_country, code, int(start_year), int(end_year)) for code in selected_ext}
+
+dfs = list(wb_d.values()) + list(ext_d.values())
+
+raw_df = merge_wide(dfs).copy()
+has_missing = raw_df.drop(columns=["Year"]).isna().any().any() if not raw_df.empty else False
+
+missing_method = st.session_state.get("missing_method", "Giữ nguyên (N/A)")
+imputed_df, na_report = impute_missing(raw_df, missing_method)
+
+stats_df = compute_descriptive_stats(imputed_df)
+corr_df = correlation_matrix(imputed_df)
+
+# ---------------------------
+# Build DataFrame hiển thị & định dạng
+# ---------------------------
+def build_display_df(numeric_df: pd.DataFrame) -> pd.DataFrame:
+    if numeric_df.empty:
+        return numeric_df
+    df = numeric_df.copy()
+    rename_map = {c: get_vn_label_with_unit(c) for c in df.columns if c != "Year"}
+    df_renamed = df.rename(columns=rename_map)
+
+    formatted = df_renamed.copy()
+    inv = {get_vn_label_with_unit(code): code for code in raw_df.columns if code != "Year"}
+    for c in formatted.columns:
+        if c == "Year":
+            continue
+        code = inv.get(c, None)
+        if code and not is_percent_unit(code):
+            formatted[c] = formatted[c].apply(lambda v: f"{int(round(v)):,}" if pd.notna(v) else v)
+        else:
+            formatted[c] = formatted[c].apply(lambda v: None if pd.isna(v) else round(float(v), 2))
+    return formatted
+
+display_df = build_display_df(imputed_df)
+
+# ---------------------------
+# Tabs
+# ---------------------------
+tab_data, tab_charts, tab_stats, tab_download, tab_ai = st.tabs([
+    "📥 Dữ liệu",
+    "📊 Biểu đồ",
+    "📐 Thống kê mô tả",
+    "⬇️ Tải dữ liệu",
+    "🤖 AI phân tích và tư vấn"
+])
+
+with tab_data:
+    st.subheader("Bảng dữ liệu đã xử lý")
+
+    if has_missing:
+        with st.expander("⚠️ Thiếu dữ liệu phát hiện — Chọn phương án xử lý", expanded=False):
+            st.selectbox(
+                "Phương án xử lý",
+                ["Giữ nguyên (N/A)", "Forward/Backward fill", "Điền trung bình theo cột", "Điền median theo cột"],
+                index=["Giữ nguyên (N/A)", "Forward/Backward fill", "Điền trung bình theo cột", "Điền median theo cột"].index(
+                    st.session_state.get("missing_method", "Giữ nguyên (N/A)")
+                ),
+                key="missing_method",
+                help="Đổi lựa chọn sẽ tự áp dụng trong lần tải lại."
+            )
+            if any(v > 0 for v in na_report.values()):
+                vn_badges = []
+                for code, cnt in na_report.items():
+                    if cnt > 0:
+                        vn_badges.append(f"{get_vn_label_with_unit(code)}:{cnt}")
+                if vn_badges:
+                    st.info("Sau xử lý hiện tại vẫn còn N/A ở: " + ", ".join(vn_badges))
+
+    if not display_df.empty:
+        df_show = display_df.copy()
+        df_show.index = np.arange(1, len(df_show) + 1)
+        df_show.index.name = "STT"
+        st.dataframe(df_show, use_container_width=True, height=420)
+    else:
+        st.info("Chưa có dữ liệu để hiển thị.")
+
+    source_list = ["World Bank Open Data"]
+    if any(c in selected_ext for c in ["FR.INR.LEND", "FR.INR.DPST", "PA.NUS.FCRF"]):
+        source_list.append("WB proxy cho chỉ số SBV/IMF/GSO")
+    if "SBV.POLICY.RATE" in selected_ext:
+        source_list.append("SBV (lãi suất điều hành — placeholder)")
+    st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
+
+with tab_charts:
+    st.subheader("Trực quan hoá")
+    chart_types = st.multiselect("Chọn loại biểu đồ", ["Line", "Bar", "Combo", "Scatter", "Heatmap"], default=["Line", "Heatmap"])
+    available_series = [c for c in imputed_df.columns if c != "Year"]
+    selected_series_for_plot = st.multiselect(
+        "Chọn chỉ tiêu cần vẽ",
+        options=available_series,
+        default=available_series,
+        format_func=lambda code: get_vn_label_with_unit(code)
+    )
+
+    if imputed_df.empty or not selected_series_for_plot:
+        st.info("Chưa đủ dữ liệu hoặc chưa chọn chỉ tiêu.")
+    else:
+        df_plot = imputed_df[["Year"] + selected_series_for_plot].copy()
+
+        if "Line" in chart_types:
+            st.markdown("**Biểu đồ đường — Xu hướng theo thời gian**")
+            m = df_plot.melt(id_vars="Year", var_name="Indicator", value_name="Value")
+            m["Indicator"] = m["Indicator"].apply(get_vn_label_with_unit)
+            def _fmt_row(r):
+                is_pct = "%" in str(r["Indicator"])
+                val = _format_number_vn(r["Value"], decimals_auto=False, force_decimals=2) + " %" if is_pct else _format_number_vn(r["Value"])
+                return f"{r['Indicator']}={val}<br>Năm={int(r['Year'])}"
+            m["Hover"] = m.apply(_fmt_row, axis=1)
+            fig = px.line(m, x="Year", y="Value", color="Indicator", markers=True, hover_data=None)
+            fig.update_traces(hovertemplate="%{text}<extra></extra>", text=m["Hover"])
+            fig.update_layout(height=450, legend_title_text="Chỉ tiêu")
+            st.plotly_chart(fig, use_container_width=True)
+
+        if "Bar" in chart_types:
+            st.markdown("**Biểu đồ cột — So sánh theo năm**")
+            bar_col = st.selectbox("Chỉ tiêu cho Bar", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c))
+            df_bar = df_plot[["Year", bar_col]].copy()
+            _is_pct = "%" in get_vn_label_with_unit(bar_col)
+            df_bar["Hover"] = df_bar.apply(lambda r: f"{get_vn_label_with_unit(bar_col)}=" + (_format_number_vn(r[bar_col], decimals_auto=False, force_decimals=2) + " %" if _is_pct else _format_number_vn(r[bar_col])) + f"<br>Năm={int(r['Year'])}", axis=1)
+            fig = px.bar(df_bar, x="Year", y=bar_col, title=get_vn_label_with_unit(bar_col), hover_data=None)
+            fig.update_traces(hovertemplate="%{text}<extra></extra>", text=df_bar["Hover"])
+            fig.update_layout(height=420)
+            st.plotly_chart(fig, use_container_width=True)
+
+        if "Combo" in chart_types:
+            st.markdown("**Biểu đồ kết hợp — Bar + Line**")
+            c1, c2 = st.columns(2)
+            with c1:
+                bar_c = st.selectbox("Bar =", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c), key="bar_combo")
+            with c2:
+                cand_line = [c for c in selected_series_for_plot if c != bar_c]
+                line_c = st.selectbox("Line =", options=cand_line if cand_line else selected_series_for_plot,
+                                      format_func=lambda c: get_vn_label_with_unit(c), key="line_combo")
+            fig = go.Figure()
+            _is_pct_bar = "%" in get_vn_label_with_unit(bar_c)
+            bar_hover = [f"{get_vn_label_with_unit(bar_c)}=" + (_format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if _is_pct_bar else _format_number_vn(v)) + f"<br>Năm={int(y)}" for v, y in zip(df_plot[bar_c], df_plot["Year"])]
+            fig.add_bar(x=df_plot["Year"], y=df_plot[bar_c], name=get_vn_label_with_unit(bar_c), hovertext=bar_hover, hovertemplate="%{hovertext}<extra></extra>")
+            _is_pct_line = "%" in get_vn_label_with_unit(line_c)
+            line_hover = [f"{get_vn_label_with_unit(line_c)}=" + (_format_number_vn(v, decimals_auto=False, force_decimals=2) + " %" if _is_pct_line else _format_number_vn(v)) + f"<br>Năm={int(y)}" for v, y in zip(df_plot[line_c], df_plot["Year"])]
+            fig.add_trace(go.Scatter(x=df_plot["Year"], y=df_plot[line_c], mode="lines+markers",
+                                     name=get_vn_label_with_unit(line_c), yaxis="y2", hovertext=line_hover, hovertemplate="%{hovertext}<extra></extra>"))
+            fig.update_layout(
+                height=450,
+                yaxis=dict(title=get_vn_label_with_unit(bar_c)),
+                yaxis2=dict(title=get_vn_label_with_unit(line_c), overlaying='y', side='right'),
+                legend_title_text="Chỉ tiêu"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        if "Scatter" in chart_types:
+            st.markdown("**Biểu đồ phân tán — Tương quan hai biến**")
+            colx, coly = st.columns(2)
+            with colx:
+                scatter_x = st.selectbox("Chọn X", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c), key="scatter_x")
+            with coly:
+                scatter_y = st.selectbox("Chọn Y", options=[c for c in selected_series_for_plot if c != scatter_x] or selected_series_for_plot,
+                                         format_func=lambda c: get_vn_label_with_unit(c), key="scatter_y")
+            sc = df_plot[[scatter_x, scatter_y, "Year"]].dropna()
+            if sc.empty:
+                st.info("Không đủ dữ liệu để vẽ Scatter.")
+            else:
+                isx = "%" in get_vn_label_with_unit(scatter_x)
+                isy = "%" in get_vn_label_with_unit(scatter_y)
+                _hover = [f"{get_vn_label_with_unit(scatter_x)}=" + (_format_number_vn(x, decimals_auto=False, force_decimals=2) + " %" if isx else _format_number_vn(x)) + "<br>" + f"{get_vn_label_with_unit(scatter_y)}=" + (_format_number_vn(y, decimals_auto=False, force_decimals=2) + " %" if isy else _format_number_vn(y)) + f"<br>Năm={int(yr)}" for x, y, yr in zip(sc[scatter_x], sc[scatter_y], sc["Year"])]
+                fig = px.scatter(sc, x=scatter_x, y=scatter_y, hover_data=None)
+                fig.update_traces(hovertext=_hover, hovertemplate="%{hovertext}<extra></extra>")
+                fig.update_layout(height=420, xaxis_title=get_vn_label_with_unit(scatter_x), yaxis_title=get_vn_label_with_unit(scatter_y))
+                trend = add_trendline(sc, scatter_x, scatter_y)
+                if trend:
+                    x_line, y_line, a, b = trend
+                    fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", name=f"Đường xu hướng (y≈{a:.2f}x+{b:.2f})"))
+                st.plotly_chart(fig, use_container_width=True)
+
+        if "Heatmap" in chart_types:
+            st.markdown("**Biểu đồ nhiệt — Ma trận tương quan**")
+            corr = correlation_matrix(df_plot)
+            if corr.empty:
+                st.info("Chưa đủ biến số để tính tương quan.")
+            else:
+                corr_vn = corr.copy()
+                corr_vn.columns = [get_vn_label_with_unit(c) for c in corr_vn.columns]
+                corr_vn.index = [get_vn_label_with_unit(c) for c in corr_vn.index]
+                fig = px.imshow(corr_vn, text_auto=".2f", aspect="auto", color_continuous_scale="RdBu", origin="lower")
+                fig.update_layout(height=520, coloraxis_colorbar=dict(title="r"))
+                st.plotly_chart(fig, use_container_width=True)
+
+with tab_stats:
+    st.subheader("Bảng thống kê mô tả")
+    if stats_df.empty:
+        st.info("Chưa có dữ liệu để tính thống kê.")
+    else:
+        disp = stats_df.copy()
+        num_cols = ["Giá trị TB (Mean)", "Độ lệch chuẩn (Std)", "Nhỏ nhất (Min)",
+                    "Lớn nhất (Max)", "Trung vị (Median)", "Q1", "Q3", "Hệ số biến thiên (CV%)"]
+        for c in num_cols:
+            if c in disp.columns:
+                disp[c] = disp[c].astype(float).round(3)
+        disp_show = disp.copy()
+        disp_show.index = np.arange(1, len(disp_show) + 1)
+        disp_show.index.name = "STT"
+        st.dataframe(disp_show, use_container_width=True, height=420)
+        st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
+
+with tab_download:
+    st.subheader("Tải dữ liệu")
+    if imputed_df.empty:
+        st.info("Chưa có dữ liệu để tải.")
+    else:
+        bytes_xlsx = to_excel_bytes(imputed_df, stats_df, corr_df if not corr_df.empty else pd.DataFrame())
+        st.download_button(
+            label="⬇️ Tải Excel (Data + Stats + Correlation)",
+            data=bytes_xlsx,
+            file_name=f"macro_{sel_country}_{start_year}-{end_year}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+        csv_bytes = imputed_df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label="⬇️ Tải CSV (Data)",
+            data=csv_bytes,
+            file_name=f"macro_{sel_country}_{start_year}-{end_year}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+        st.caption("Nguồn dữ liệu: " + "; ".join(source_list))
+
+with tab_ai:
+    st.subheader("AI phân tích và tư vấn")
+    audience = st.selectbox("Đối tượng tư vấn", ["Nhà đầu tư", "Doanh nghiệp", "Ngân hàng (Agribank)"])
+
+    def build_ai_prompt(audience: str, country_label: str, year_range: str,
+                        stats_df: pd.DataFrame, corr_df: pd.DataFrame, selected_cols: list) -> str:
+        top_lines = []
+        if not stats_df.empty and "Hệ số biến thiên (CV%)" in stats_df.columns:
+            tmp_cv = stats_df.sort_values("Hệ số biến thiên (CV%)", ascending=False).head(3)
+            for _, r in tmp_cv.iterrows():
+                cvv = r["Hệ số biến thiên (CV%)"] if pd.notna(r["Hệ số biến thiên (CV%)"]) else 0
+                minv = r["Nhỏ nhất (Min)"] if pd.notna(r["Nhỏ nhất (Min)"]) else 0
+                maxv = r["Lớn nhất (Max)"] if pd.notna(r["Lớn nhất (Max)"]) else 0
+                top_lines.append(f"- {r['Chỉ tiêu']}: CV≈{cvv:.1f}%, Min {minv:.2f} ({r['Năm Min']}), Max {maxv:.2f} ({r['Năm Max']}).")
+
+        corr_lines = []
+        if not corr_df.empty:
+            cols = list(corr_df.columns)
+            for i in range(len(cols)):
+                for j in range(i+1, len(cols)):
+                    r = corr_df.iloc[i, j]
+                    if pd.notna(r) and abs(r) >= 0.7:
+                        corr_lines.append(f"- {get_vn_label_with_unit(cols[i])} vs {get_vn_label_with_unit(cols[j])}: r={float(r):.2f}")
+        if not corr_lines:
+            corr_lines = ["- Chưa có tương quan mạnh (|r| ≥ 0.7)."]
+
+        if audience == "Nhà đầu tư":
+            advice_block = """- Phân bổ (CK/BĐS/vàng/FX) theo 2–3 kịch bản (cơ sở, tích cực, thận trọng) với ngưỡng kích hoạt.
+- Quản trị rủi ro: stop-loss, tái cân bằng theo biến động lạm phát/lãi suất."""
+        elif audience == "Doanh nghiệp":
+            advice_block = """- Kế hoạch sản xuất/vốn/XNK theo kịch bản cầu nội địa & tỷ giá.
+- Quản trị rủi ro chi phí vốn (lãi suất) và tỷ giá; tối ưu tồn kho, chu kỳ tiền mặt."""
+        else:
+            advice_block = """- Gói cho vay ưu đãi theo ngành ưu tiên; linh hoạt kỳ hạn/lãi suất theo kịch bản.
+- Tiêu chí thẩm định: DSCR, vòng quay vốn, độ nhạy lãi suất/tỷ giá; xếp hạng tín dụng nội bộ."""
+
+        prompt = f"""
+Phân tích dữ liệu vĩ mô của {country_label} giai đoạn {year_range}.
+Trình bày NGẮN GỌN theo các đề mục sau:
+
+1) Bối cảnh & Dữ liệu chính:
+- Chỉ tiêu đang phân tích: {', '.join([get_vn_label_with_unit(c) for c in selected_cols])}.
+
+2) Xu hướng nổi bật & Biến động:
+{os.linesep.join(top_lines) if top_lines else "- (Dữ liệu hạn chế để tóm tắt chi tiết)"} 
+
+3) Tương quan đáng chú ý:
+{os.linesep.join(corr_lines)}
+
+4) Kiến nghị cho đối tượng: {audience}
+{advice_block}
+
+5) Hành động thực thi (kèm KPI/điều kiện kích hoạt):
+
+6) Rủi cấu chính & Cách kiểm chứng sau mỗi kỳ công bố dữ liệu:
+"""
+        return prompt.strip()
+
+    if st.button("🚀 Sinh AI phân tích và tư vấn"):
+        if imputed_df.empty:
+            st.info("Chưa có dữ liệu để phân tích.")
+        else:
+            prompt = build_ai_prompt(
+                audience=audience,
+                country_label=sel_country_name,
+                year_range=f"{start_year}-{end_year}",
+                stats_df=stats_df,
+                corr_df=corr_df,
+                selected_cols=[c for c in imputed_df.columns if c != "Year"]
+            )
+            if not GEMINI_OK:
+                st.warning("⚠️ Mô-đun AI chưa sẵn sàng. Bạn vui lòng thêm 'google-generativeai' vào file requirements.txt.")
+            else:
+                api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", "")).strip()
+                
+                if not api_key:
+                    st.warning("⚠️ Chưa phát hiện GEMINI_API_KEY. Vui lòng đặt trong st.secrets hoặc biến môi trường.")
+                else:
+                    try:
+                        genai.configure(api_key=api_key)
+                        
+                        # Sử dụng mô hình gemini-pro (đảm bảo tương thích 100% với mọi phiên bản thư viện)
+                        model = genai.GenerativeModel("gemini-pro")
+                        
+                        generation_config = genai.types.GenerationConfig(
+                            temperature=0.4,
+                            max_output_tokens=900,
+                        )
+                        
+                        # Gộp lệnh system trực tiếp vào prompt để tránh lỗi 404
+                        final_prompt = "Bạn là chuyên gia kinh tế vĩ mô & tài chính, viết ngắn gọn, súc tích, dùng tiêu đề tiếng Việt.\n\n" + prompt
+                        
+                        response = model.generate_content(final_prompt, generation_config=generation_config)
+                        st.markdown(response.text)
+                    except Exception as e:
+                        st.error(f"Lỗi khi gọi Gemini: {e}")
+
+# Footer
+st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list))
