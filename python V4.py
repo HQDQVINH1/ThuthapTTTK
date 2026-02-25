@@ -487,4 +487,4 @@ with tab_charts:
 
         if "Bar" in chart_types:
             st.markdown("**Biểu đồ cột — So sánh theo năm**")
-            bar_col = st.selectbox("Chỉ tiêu cho Bar", options=selected_series_
+            bar_col = st.selectbox("Chỉ tiêu cho Bar", options=selected_series_for_plot, format_func=lambda c: get_vn_label_with_unit(c))
