@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # CHƯƠNG TRÌNH THU THẬP VÀ TỔNG HỢP THÔNG TIN KINH TẾ VĨ MÔ
-# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 10 - STABLE)
+# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 11 - AUTO DETECT MODEL)
 # ============================================================
 
 import os
@@ -629,7 +629,7 @@ with tab_ai:
             corr_lines = ["- Chưa có tương quan mạnh (|r| ≥ 0.7)."]
 
         if audience == "Nhà đầu tư":
-            advice_block = """- Phân bổ (CK/BĐS/vàng/FX) theo 2–3 kịch bản (cơ sở, tích cực, thận trọng) với ngưỡng kích hoạt.
+            advice_block = """- Phân bổ (CK/BĐS/vàng/FX) theo 2-3 kịch bản (cơ sở, tích cực, thận trọng) với ngưỡng kích hoạt.
 - Quản trị rủi ro: stop-loss, tái cân bằng theo biến động lạm phát/lãi suất."""
         elif audience == "Doanh nghiệp":
             advice_block = """- Kế hoạch sản xuất/vốn/XNK theo kịch bản cầu nội địa & tỷ giá.
@@ -656,7 +656,7 @@ Trình bày NGẮN GỌN theo các đề mục sau:
 
 5) Hành động thực thi (kèm KPI/điều kiện kích hoạt):
 
-6) Rủi cấu chính & Cách kiểm chứng sau mỗi kỳ công bố dữ liệu:
+6) Rủi ro chính & Cách kiểm chứng sau mỗi kỳ công bố dữ liệu:
 """
         return prompt.strip()
 
@@ -683,21 +683,38 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                     try:
                         genai.configure(api_key=api_key)
                         
-                        # Sử dụng mô hình gemini-pro (đảm bảo tương thích 100% với mọi phiên bản thư viện)
-                        model = genai.GenerativeModel("gemini-pro")
+                        # --- THUẬT TOÁN TỰ ĐỘNG DÒ TÌM MODEL ---
+                        # 1. Lấy danh sách tất cả các model mà API Key của bạn được phép dùng
+                        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                         
-                        generation_config = genai.types.GenerationConfig(
-                            temperature=0.4,
-                            max_output_tokens=900,
-                        )
-                        
-                        # Gộp lệnh system trực tiếp vào prompt để tránh lỗi 404
-                        final_prompt = "Bạn là chuyên gia kinh tế vĩ mô & tài chính, viết ngắn gọn, súc tích, dùng tiêu đề tiếng Việt.\n\n" + prompt
-                        
-                        response = model.generate_content(final_prompt, generation_config=generation_config)
-                        st.markdown(response.text)
+                        if not available_models:
+                            st.error("API Key của bạn không có quyền truy cập vào bất kỳ mô hình tạo văn bản nào. Vui lòng kiểm tra lại Google AI Studio.")
+                        else:
+                            # 2. Ưu tiên chọn các bản xịn nhất (nhanh, rẻ, thông minh), nếu không có thì lấy cái đầu tiên tìm được
+                            chosen_model = available_models[0] 
+                            for m_name in available_models:
+                                if 'gemini-1.5-flash' in m_name:
+                                    chosen_model = m_name
+                                    break
+                                elif 'gemini-1.5-pro' in m_name:
+                                    chosen_model = m_name
+                            
+                            model = genai.GenerativeModel(chosen_model)
+                            
+                            generation_config = genai.types.GenerationConfig(
+                                temperature=0.4,
+                                max_output_tokens=900,
+                            )
+                            
+                            final_prompt = "Bạn là chuyên gia kinh tế vĩ mô & tài chính, viết ngắn gọn, súc tích, dùng tiêu đề tiếng Việt.\n\n" + prompt
+                            
+                            # Hiển thị thông báo đang dùng model nào để bạn dễ theo dõi
+                            with st.spinner(f"Đang phân tích bằng hệ thống: {chosen_model.replace('models/', '')}..."):
+                                response = model.generate_content(final_prompt, generation_config=generation_config)
+                                st.markdown(response.text)
+                                
                     except Exception as e:
-                        st.error(f"Lỗi khi gọi Gemini: {e}")
+                        st.error(f"Lỗi khi gọi API Gemini: {e}")
 
 # Footer
 st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list))
