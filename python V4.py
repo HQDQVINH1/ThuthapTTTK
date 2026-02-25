@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # CHƯƠNG TRÌNH THU THẬP VÀ TỔNG HỢP THÔNG TIN KINH TẾ VĨ MÔ
-# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 11 - AUTO DETECT MODEL)
+# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 12 - STREAMING & UNLIMITED)
 # ============================================================
 
 import os
@@ -683,14 +683,11 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                     try:
                         genai.configure(api_key=api_key)
                         
-                        # --- THUẬT TOÁN TỰ ĐỘNG DÒ TÌM MODEL ---
-                        # 1. Lấy danh sách tất cả các model mà API Key của bạn được phép dùng
                         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                         
                         if not available_models:
                             st.error("API Key của bạn không có quyền truy cập vào bất kỳ mô hình tạo văn bản nào. Vui lòng kiểm tra lại Google AI Studio.")
                         else:
-                            # 2. Ưu tiên chọn các bản xịn nhất (nhanh, rẻ, thông minh), nếu không có thì lấy cái đầu tiên tìm được
                             chosen_model = available_models[0] 
                             for m_name in available_models:
                                 if 'gemini-1.5-flash' in m_name:
@@ -701,17 +698,29 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                             
                             model = genai.GenerativeModel(chosen_model)
                             
+                            # TĂNG MAX OUTPUT TOKENS LÊN MỨC TỐI ĐA ĐỂ KHÔNG BỊ CẮT CHỮ
                             generation_config = genai.types.GenerationConfig(
-                                temperature=0.4,
-                                max_output_tokens=900,
+                                temperature=0.5,
+                                max_output_tokens=8192, 
                             )
                             
-                            final_prompt = "Bạn là chuyên gia kinh tế vĩ mô & tài chính, viết ngắn gọn, súc tích, dùng tiêu đề tiếng Việt.\n\n" + prompt
+                            final_prompt = "Bạn là chuyên gia kinh tế vĩ mô & tài chính, viết chi tiết, súc tích, dùng tiêu đề tiếng Việt.\n\n" + prompt
                             
-                            # Hiển thị thông báo đang dùng model nào để bạn dễ theo dõi
                             with st.spinner(f"Đang phân tích bằng hệ thống: {chosen_model.replace('models/', '')}..."):
-                                response = model.generate_content(final_prompt, generation_config=generation_config)
-                                st.markdown(response.text)
+                                # BẬT CHẾ ĐỘ STREAMING (Chữ hiện ra từ từ)
+                                response = model.generate_content(final_prompt, generation_config=generation_config, stream=True)
+                                
+                                message_placeholder = st.empty()
+                                full_response = ""
+                                
+                                for chunk in response:
+                                    if chunk.text:
+                                        full_response += chunk.text
+                                        # Hiện con trỏ nhấp nháy tạo cảm giác AI đang gõ
+                                        message_placeholder.markdown(full_response + "▌") 
+                                
+                                # Xóa con trỏ nhấp nháy khi hoàn thành
+                                message_placeholder.markdown(full_response)
                                 
                     except Exception as e:
                         st.error(f"Lỗi khi gọi API Gemini: {e}")
