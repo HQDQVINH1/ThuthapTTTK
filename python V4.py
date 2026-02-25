@@ -7,6 +7,7 @@
 import os
 import io
 import math
+import time # THÊM: thư viện time để phục vụ việc chờ tải lại mạng
 import requests
 import numpy as np
 import pandas as pd
@@ -111,23 +112,36 @@ def list_wb_countries():
     df = pd.DataFrame(rows).sort_values("name")
     return df
 
+# SỬA LỖI TẠI ĐÂY: Thêm cache, tăng timeout và vòng lặp thử lại tải dữ liệu
+@st.cache_data(show_spinner=False, ttl=60*60)
 def _fetch_wb_indicator(country_code: str, indicator_code: str, start_year: int, end_year: int) -> pd.DataFrame:
     url = f"{WB_API_BASE}/country/{country_code}/indicator/{indicator_code}?date={start_year}:{end_year}&format=json&per_page=12000"
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    js = r.json()
-    if not isinstance(js, list) or len(js) < 2 or js[1] is None:
-        return pd.DataFrame(columns=["Year", indicator_code])
-    rows = []
-    for rec in js[1]:
-        y = rec.get("date")
-        val = rec.get("value")
+    
+    max_retries = 3
+    for i in range(max_retries):
         try:
-            y = int(y)
-        except:
-            continue
-        rows.append({"Year": y, indicator_code: val})
-    return pd.DataFrame(rows).sort_values("Year")
+            r = requests.get(url, timeout=120)
+            r.raise_for_status()
+            js = r.json()
+            if not isinstance(js, list) or len(js) < 2 or js[1] is None:
+                return pd.DataFrame(columns=["Year", indicator_code])
+            rows = []
+            for rec in js[1]:
+                y = rec.get("date")
+                val = rec.get("value")
+                try:
+                    y = int(y)
+                except:
+                    continue
+                rows.append({"Year": y, indicator_code: val})
+            return pd.DataFrame(rows).sort_values("Year")
+        except requests.exceptions.RequestException:
+            if i == max_retries - 1:
+                # Trả về bảng rỗng thay vì sập app nếu quá thời gian chờ mạng nhiều lần
+                return pd.DataFrame(columns=["Year", indicator_code])
+            time.sleep(2)
+    
+    return pd.DataFrame(columns=["Year", indicator_code])
 
 @st.cache_data(show_spinner=False, ttl=60*30)
 def fetch_wb_indicators_parallel(country_code: str, indicator_codes: list, start_year: int, end_year: int) -> dict:
