@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # CHƯƠNG TRÌNH THU THẬP VÀ TỔNG HỢP THÔNG TIN KINH TẾ VĨ MÔ
-# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 12 - STREAMING & UNLIMITED)
+# CỦA VIỆT NAM TRÊN THỊ TRƯỜNG TÀI CHÍNH (VERSION 13 - PERFECT UX)
 # ============================================================
 
 import os
@@ -604,6 +604,13 @@ with tab_download:
 
 with tab_ai:
     st.subheader("AI phân tích và tư vấn")
+    
+    # --- CẢI THIỆN UX: KHỞI TẠO BỘ NHỚ CHO AI ---
+    if "ai_report" not in st.session_state:
+        st.session_state["ai_report"] = ""
+    if "last_audience" not in st.session_state:
+        st.session_state["last_audience"] = ""
+
     audience = st.selectbox("Đối tượng tư vấn", ["Nhà đầu tư", "Doanh nghiệp", "Ngân hàng (Agribank)"])
 
     def build_ai_prompt(audience: str, country_label: str, year_range: str,
@@ -660,10 +667,15 @@ Trình bày NGẮN GỌN theo các đề mục sau:
 """
         return prompt.strip()
 
+    # --- CẢI THIỆN UX: XỬ LÝ NÚT BẤM VÀ BỘ NHỚ ---
     if st.button("🚀 Sinh AI phân tích và tư vấn"):
         if imputed_df.empty:
             st.info("Chưa có dữ liệu để phân tích.")
         else:
+            # Xóa báo cáo cũ khi người dùng bấm sinh mới
+            st.session_state["ai_report"] = ""
+            st.session_state["last_audience"] = audience
+            
             prompt = build_ai_prompt(
                 audience=audience,
                 country_label=sel_country_name,
@@ -672,6 +684,7 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                 corr_df=corr_df,
                 selected_cols=[c for c in imputed_df.columns if c != "Year"]
             )
+            
             if not GEMINI_OK:
                 st.warning("⚠️ Mô-đun AI chưa sẵn sàng. Bạn vui lòng thêm 'google-generativeai' vào file requirements.txt.")
             else:
@@ -698,7 +711,6 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                             
                             model = genai.GenerativeModel(chosen_model)
                             
-                            # TĂNG MAX OUTPUT TOKENS LÊN MỨC TỐI ĐA ĐỂ KHÔNG BỊ CẮT CHỮ
                             generation_config = genai.types.GenerationConfig(
                                 temperature=0.5,
                                 max_output_tokens=8192, 
@@ -707,7 +719,6 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                             final_prompt = "Bạn là chuyên gia kinh tế vĩ mô & tài chính, viết chi tiết, súc tích, dùng tiêu đề tiếng Việt.\n\n" + prompt
                             
                             with st.spinner(f"Đang phân tích bằng hệ thống: {chosen_model.replace('models/', '')}..."):
-                                # BẬT CHẾ ĐỘ STREAMING (Chữ hiện ra từ từ)
                                 response = model.generate_content(final_prompt, generation_config=generation_config, stream=True)
                                 
                                 message_placeholder = st.empty()
@@ -716,14 +727,20 @@ Trình bày NGẮN GỌN theo các đề mục sau:
                                 for chunk in response:
                                     if chunk.text:
                                         full_response += chunk.text
-                                        # Hiện con trỏ nhấp nháy tạo cảm giác AI đang gõ
                                         message_placeholder.markdown(full_response + "▌") 
                                 
-                                # Xóa con trỏ nhấp nháy khi hoàn thành
                                 message_placeholder.markdown(full_response)
+                                
+                                # LƯU KẾT QUẢ VÀO BỘ NHỚ SAU KHI SINH XONG
+                                st.session_state["ai_report"] = full_response
                                 
                     except Exception as e:
                         st.error(f"Lỗi khi gọi API Gemini: {e}")
+
+    # --- CẢI THIỆN UX: HIỂN THỊ LẠI BÁO CÁO NẾU ĐÃ CÓ TRONG BỘ NHỚ ---
+    elif st.session_state["ai_report"] != "":
+        st.success(f"📌 Báo cáo phân tích dành cho: **{st.session_state['last_audience']}** (Được lưu lại từ lần tạo trước)")
+        st.markdown(st.session_state["ai_report"])
 
 # Footer
 st.caption("© 2025 — Viet Macro Intelligence • Nguồn: " + "; ".join(source_list))
